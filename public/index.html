@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#5b21b6">
+  <title>Word Musicians</title>
+  <meta name="description" content="A multiplayer rhythm word game. Hit the words that fit the category, dodge the Conductor's tricks!">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎵</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Russo+One&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <script type="importmap">{ "imports": { "three": "/vendor/three/three.module.js" } }</script>
+</head>
+<body>
+  <div id="stage"></div>
+  <div id="flash"></div>
+
+  <!-- ============================== HOME ============================== -->
+  <section id="screen-home" class="screen active">
+    <header class="logo">
+      <div class="logo-notes">♪ ♫ ♪</div>
+      <h1><span class="w1">WORD</span><span class="w2">MUSICIANS</span></h1>
+      <p class="tagline">Hit the words that fit. Dodge the tricks. Beat the Conductor!</p>
+    </header>
+
+    <div class="panel home-panel">
+      <label class="field">
+        <span>Your name</span>
+        <input id="name-input" maxlength="16" placeholder="e.g. Mia" autocomplete="off">
+      </label>
+      <button id="btn-host" class="btn primary big">🎤 Host a Game</button>
+
+      <div class="list-head">
+        <h2>Open Games</h2>
+        <span id="conn-status" class="pill">connecting…</span>
+      </div>
+      <ul id="room-list" class="room-list"></ul>
+
+      <details class="howto">
+        <summary>How to play</summary>
+        <ul>
+          <li>Each round has a <b>category</b>, like <i>Animals</i>.</li>
+          <li><b>Word Musicians</b>: words slide down 5 lanes. <b>Tap, click</b> or press <kbd>D</kbd> <kbd>F</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd> when a word that <b>fits</b> reaches the line.</li>
+          <li>Let <b>trick words</b> slide past! Hitting one costs points and breaks your combo.</li>
+          <li>The <b>Conductor</b> picks the words live and tries to trip everyone up. They score when players miss or fall for a trick, but they must always send more real words than trick words.</li>
+          <li>The Conductor role passes to the next player each round.</li>
+        </ul>
+      </details>
+    </div>
+  </section>
+
+  <!-- ============================== HOST SETUP ============================== -->
+  <section id="screen-host" class="screen">
+    <div class="panel wide scroll">
+      <h2 id="host-title">Host a Game</h2>
+
+      <div class="grid2">
+        <label class="field"><span>Game name</span><input id="room-name" maxlength="28" placeholder="Mia's Band"></label>
+        <label class="field"><span>Conductor</span><select id="set-conductorMode"></select></label>
+      </div>
+
+      <div class="grid2 ranges">
+        <label class="range"><span>Speed <b id="val-speed"></b></span><input type="range" id="set-speed"></label>
+        <label class="range"><span>Round length <b id="val-roundSeconds"></b></span><input type="range" id="set-roundSeconds" step="15"></label>
+        <label class="range"><span>Words per round <b id="val-wordsPerRound"></b></span><input type="range" id="set-wordsPerRound" step="5"></label>
+        <label class="range"><span>Trick words to choose from <b id="val-distractors"></b></span><input type="range" id="set-distractors"></label>
+        <label class="range"><span>Max trick words sent <b id="val-maxDistractorPct"></b></span><input type="range" id="set-maxDistractorPct" step="5"></label>
+        <label class="range"><span>Rounds <b id="val-rounds"></b></span><input type="range" id="set-rounds"></label>
+      </div>
+
+      <div class="section-head">
+        <h3>Categories</h3>
+        <div>
+          <button class="btn tiny" id="cat-all">All</button>
+          <button class="btn tiny" id="cat-none">None</button>
+        </div>
+      </div>
+      <div id="cat-grid" class="cat-grid"></div>
+
+      <div class="section-head">
+        <h3>Custom categories <small>up to 5, with 3–10 words each</small></h3>
+        <button class="btn tiny" id="btn-add-custom">+ Add</button>
+      </div>
+      <div id="custom-list" class="custom-list"></div>
+      <p id="host-error" class="error"></p>
+
+      <div class="actions">
+        <button class="btn" id="btn-host-back">← Back</button>
+        <button class="btn" id="btn-midi" title="Download a generated song as a MIDI file">🎵 Sample MIDI</button>
+        <button class="btn primary" id="btn-host-go">Create Game ▶</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== ROOM ============================== -->
+  <section id="screen-room" class="screen">
+    <div class="panel">
+      <div class="room-head">
+        <h2 id="room-title">Band</h2>
+        <span class="pill code">Code <b id="room-code"></b></span>
+      </div>
+      <h3 id="player-count">Players</h3>
+      <ul id="player-list" class="player-list"></ul>
+      <div id="room-settings" class="settings-summary"></div>
+      <p id="room-hint" class="hint"></p>
+      <div class="actions">
+        <button class="btn" id="btn-leave">Leave</button>
+        <button class="btn" id="btn-edit-settings">⚙ Settings</button>
+        <button class="btn primary" id="btn-start">Start Game ▶</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== GAME ============================== -->
+  <section id="screen-game" class="screen">
+    <div class="hud-tl">
+      <div class="timer-shell">
+        <div id="timer-fill"></div>
+        <span id="timer-text">0:00</span>
+      </div>
+      <div class="score-shell">
+        <span id="grade" class="grade">-</span>
+        <span id="score">0000000</span>
+      </div>
+    </div>
+
+    <div class="hud-tc">
+      <div id="cat-banner"><span id="cat-emoji"></span> <span id="cat-name"></span></div>
+      <div id="role-banner"></div>
+    </div>
+
+    <div class="hud-tr">
+      <button id="btn-esc" class="esc" aria-label="Menu">ESC</button>
+      <div id="combo-box" class="combo-box"><b id="combo">0</b><span>COMBO</span></div>
+      <ol id="scoreboard" class="scoreboard"></ol>
+    </div>
+
+    <div id="feed" class="feed"></div>
+    <div id="judgements"></div>
+    <div id="lane-keys"></div>
+    <div id="countdown"></div>
+    <div id="rotate-hint">📱↻ Turn your phone sideways for bigger words!</div>
+    <div id="big-category"></div>
+
+    <div id="conductor-panel" class="conductor-panel hidden">
+      <div class="cp-head">
+        <span>🎼 <b>You are the Conductor!</b> Pick words, put them in lanes, then send them. Real words must outnumber trick words.</span>
+        <span id="cp-budget" class="pill"></span>
+      </div>
+      <div id="cp-palette" class="chips"></div>
+      <div id="cp-slots" class="slots"></div>
+      <div class="cp-actions">
+        <button class="btn small" id="cp-rand-good">🎲 Fits</button>
+        <button class="btn small" id="cp-rand-trick">🎲 Trick</button>
+        <button class="btn small" id="cp-clear">Clear</button>
+        <button class="btn primary" id="cp-send">SEND ▶ <kbd>Space</kbd></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== OVERLAYS ============================== -->
+  <div id="overlay-results" class="overlay hidden">
+    <div class="panel">
+      <h2 id="res-title">Round complete!</h2>
+      <table class="results"><thead><tr><th>#</th><th>Musician</th><th>Round</th><th>Total</th></tr></thead><tbody id="res-body"></tbody></table>
+      <p id="res-next" class="hint"></p>
+    </div>
+  </div>
+
+  <div id="overlay-final" class="overlay hidden">
+    <div class="panel">
+      <h2>🏆 Final Results</h2>
+      <div id="podium" class="podium"></div>
+      <table class="results"><thead><tr><th>#</th><th>Musician</th><th>Hits</th><th>Tricked</th><th>Best combo</th><th>Score</th></tr></thead><tbody id="final-body"></tbody></table>
+      <div class="actions">
+        <button class="btn primary" id="btn-final-room">Back to the band room</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="menu" class="overlay hidden">
+    <div class="panel narrow">
+      <h2>Paused?</h2>
+      <p class="hint">It's multiplayer, so the music keeps playing!</p>
+      <label class="range"><span>Music volume</span><input type="range" id="vol-music" min="0" max="1" step="0.05"></label>
+      <label class="range"><span>Sound effects</span><input type="range" id="vol-sfx" min="0" max="1" step="0.05"></label>
+      <div class="actions column">
+        <button class="btn primary" id="menu-resume">Resume</button>
+        <button class="btn" id="menu-midi">🎵 Download this song (.mid)</button>
+        <button class="btn danger" id="menu-leave">Leave game</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>
