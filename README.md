@@ -8,10 +8,10 @@ Each round has a category, such as **Animals**. Words slide down a 5-lane neon h
 
 | Musicians | Conductor |
 |---|---|
-| Tap or click a lane, or press <kbd>D</kbd> <kbd>F</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd> (or <kbd>1</kbd>–<kbd>5</kbd>), when a word reaches the line | Tap words to put them into lane slots, then press **SEND** (<kbd>Space</kbd>). Up to 5 words can be sent at once. |
+| Tap or click a lane, or press <kbd>D</kbd> <kbd>F</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd> (or <kbd>1</kbd>–<kbd>5</kbd>), when a word reaches the line | **Tap a word to send it** straight away. There's no queue and no SEND button. Words go to a **random lane**, or pick a lane (tap it on the road, use the lane buttons, or press <kbd>D</kbd> <kbd>F</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd>; <kbd>R</kbd> goes back to random). Words tapped close together land together as a chord (up to 3). <kbd>Space</kbd> sends a random real word and <kbd>T</kbd> a random trick word. |
 | ✅ Correct word: PERFECT 300 / GREAT 200 / GOOD 100, plus a combo bonus | +100 for every player who hits a trick word |
 | ❌ Trick word hit: −150 and your combo resets | +50 for every player who misses a real word |
-| Trick word let through: +50 | Must always send **more real words than trick words**. If they go quiet, the band plays a real word for them. |
+| Trick word let through: +50 | Must always send **more real words than trick words**. The quota bar shows how many more real words unlock the next trick. If they go quiet, the band plays a real word for them. |
 
 ## Features
 
@@ -19,7 +19,8 @@ Each round has a category, such as **Animals**. Words slide down a 5-lane neon h
 - Host settings: speed (5 tempos), round length, words per round, trick words to choose from, max trick-word %, rounds, and Conductor mode (rotate, host only, or computer Conductor for solo play).
 - 16 built-in categories (Animals, Fruit, Vegetables, Colours, Body Parts, Weather, Transport, Clothes, Sports, Shapes, Instruments, Jobs, Ocean Creatures, Minibeasts, Kitchen Things, Feelings). Ambiguous pairs are never used as tricks for each other, e.g. a shark is never a trick word for *Animals*.
 - Up to 5 **custom categories** with 3–10 words each. They are saved in the host's browser.
-- **Procedural MIDI soundtrack**: every round generates a new song as MIDI note data (drums, bass, pad, arpeggio, lead), synthesised live with Web Audio and synced to the beat for every player. Hit cues play notes from the current chord, and trick hits and misses get their own sounds. The song can be downloaded as a `.mid` file from the host screen or the in-game menu.
+- **Procedural MIDI soundtrack**: every round generates a new song as MIDI note data (drums, bass, pad, arpeggio, lead), synthesised live with Web Audio and synced to the beat for every player. Each speed has its own style with several variations of chord progressions, drum, bass, arpeggio and melody patterns: Chill = lo-fi (swung, 7th chords), Easy = sunny pop, Groovy = funk, Fast = dance floor (four-on-the-floor, offbeat bass), Turbo = breakbeat.
+- **Colour themes by speed**: calm blues and greens for slow songs through to sunset oranges and hot reds for fast ones, with three variations per speed (15 in all). The home screen cycles through them all. Hit cues play notes from the current chord, and trick hits and misses get their own sounds. The song can be downloaded as a `.mid` file from the host screen or the in-game menu.
 - Keyboard, mouse and multi-touch input.
 
 ## Run locally
@@ -64,8 +65,8 @@ shared/rules.js      Speeds, timing windows, points, setting limits (used by cli
 public/index.html    Screens: start, host setup, band room, game HUD, overlays
 public/css/style.css Neon UI
 public/js/main.js    Client: networking, clock sync, judging, Conductor controls
-public/js/stage.js   Three.js highway, word notes, effects, lane hit-testing
-public/js/audio.js   MIDI song generator, Web Audio synth, .mid export, sound cues
+public/js/stage.js   Three.js highway, colour themes, word notes, effects, lane hit-testing
+public/js/audio.js   MIDI song styles + generator, Web Audio synth, .mid export, sound cues
 ```
 
 Words land exactly on the beat. The server schedules each word's arrival time on the song's beat grid, and every client syncs its clock to the server. Each player's hits are judged locally against that shared timeline, so lag never makes a hit late.

@@ -11,6 +11,49 @@ const NOTE_H = NOTE_W * 0.5;
 export const LANE_COLORS = ['#4ade80', '#f472b6', '#60a5fa', '#facc15', '#c084fc'];
 const laneX = (lane) => (lane - (LANES - 1) / 2) * LANE_W;
 
+// Draw order for see-through objects. Three.js sorts transparent objects by
+// distance, which let the big road plane paint over words in the far half of
+// the highway; explicit layers keep words above the road at every distance.
+const LAYER = { road: 0, rails: 1, beams: 2, pads: 3, notes: 10, fx: 20 };
+
+// Colour themes by speed (index matches SPEEDS): calm cool colours for slow
+// songs, through to hot colours for fast ones. Each speed has a few variations
+// and the round's song seed picks one.
+export const THEMES = [
+  [ // Chill
+    { name: 'Moonlit Lagoon', sky: ['#0b1d4d', '#1e3a8a', '#0e7490', '#2dd4bf'], road: ['#14213d', '#1b2a4a'], rail: '#a5f3fc', glow: '#67e8f9', line: '#99f6e4', streak: '#bae6fd' },
+    { name: 'Lavender Dusk', sky: ['#1e1b4b', '#4338ca', '#818cf8', '#c4b5fd'], road: ['#1e1b3a', '#272449'], rail: '#c7d2fe', glow: '#a5b4fc', line: '#ddd6fe', streak: '#e0e7ff' },
+    { name: 'Deep Sea', sky: ['#022c43', '#035e7b', '#0891b2', '#67e8f9'], road: ['#0b2230', '#10303f'], rail: '#7dd3fc', glow: '#38bdf8', line: '#a5f3fc', streak: '#cffafe' },
+  ],
+  [ // Easy
+    { name: 'Spring Meadow', sky: ['#14532d', '#15803d', '#65a30d', '#bef264'], road: ['#1a2e22', '#21382a'], rail: '#bbf7d0', glow: '#86efac', line: '#d9f99d', streak: '#ecfccb' },
+    { name: 'Morning Sky', sky: ['#1d4ed8', '#3b82f6', '#7dd3fc', '#fde68a'], road: ['#1c2541', '#243056'], rail: '#bfdbfe', glow: '#93c5fd', line: '#fef08a', streak: '#ffffff' },
+    { name: 'Mint Bubblegum', sky: ['#0f766e', '#14b8a6', '#5eead4', '#f9a8d4'], road: ['#16302e', '#1d3b38'], rail: '#ccfbf1', glow: '#99f6e4', line: '#fbcfe8', streak: '#fdf2f8' },
+  ],
+  [ // Groovy
+    { name: 'Neon Disco', sky: ['#3b1d8f', '#8b2fc9', '#d946ef', '#f472b6'], road: ['#1c1f2e', '#262a3d'], rail: '#8ee3f5', glow: '#7dd3fc', line: '#5eead4', streak: '#ffffff' },
+    { name: 'Grape Soda', sky: ['#2e1065', '#6d28d9', '#a855f7', '#e9d5ff'], road: ['#1f1633', '#2a1f45'], rail: '#e9d5ff', glow: '#c084fc', line: '#f0abfc', streak: '#f5f3ff' },
+    { name: 'Retro Wave', sky: ['#1a0b3d', '#5b21b6', '#db2777', '#fb923c'], road: ['#1b1430', '#251b3f'], rail: '#f9a8d4', glow: '#f472b6', line: '#fdba74', streak: '#fce7f3' },
+  ],
+  [ // Fast
+    { name: 'Sunset Drive', sky: ['#7c2d12', '#c2410c', '#f97316', '#fde047'], road: ['#2a1a14', '#35211a'], rail: '#fed7aa', glow: '#fdba74', line: '#fde68a', streak: '#fff7ed' },
+    { name: 'Mango Tango', sky: ['#9a3412', '#ea580c', '#f59e0b', '#fef3c7'], road: ['#2b1b10', '#382415'], rail: '#fde68a', glow: '#fbbf24', line: '#fef9c3', streak: '#fffbeb' },
+    { name: 'Cherry Pop', sky: ['#831843', '#be185d', '#f43f5e', '#fda4af'], road: ['#2a1420', '#36192a'], rail: '#fecdd3', glow: '#fb7185', line: '#fda4af', streak: '#fff1f2' },
+  ],
+  [ // Turbo
+    { name: 'Red Alert', sky: ['#450a0a', '#991b1b', '#dc2626', '#f97316'], road: ['#1a0f0f', '#241414'], rail: '#fca5a5', glow: '#f87171', line: '#fde047', streak: '#fee2e2' },
+    { name: 'Electric Night', sky: ['#020617', '#1e1b4b', '#7e22ce', '#22d3ee'], road: ['#0b0b16', '#12122a'], rail: '#67e8f9', glow: '#22d3ee', line: '#a3e635', streak: '#cffafe' },
+    { name: 'Lava Core', sky: ['#1c0a00', '#7c2d12', '#ea580c', '#facc15'], road: ['#160c06', '#22130a'], rail: '#fdba74', glow: '#fb923c', line: '#fef08a', streak: '#fef3c7' },
+  ],
+];
+const STREAK_SPEED = [0.6, 0.8, 1, 1.4, 1.9]; // sky streaks rush past faster on faster songs
+
+/** The colour theme for a speed (index into SPEEDS) and song seed. */
+export function themeFor(speed, seed = 0) {
+  const set = THEMES[Math.max(0, Math.min(THEMES.length - 1, speed))];
+  return { ...set[Math.abs(seed) % set.length], speed };
+}
+
 function canvasTexture(w, h, draw) {
   const c = document.createElement('canvas');
   c.width = w;
@@ -48,6 +91,8 @@ export class Stage {
     this.travelMs = 3400;
     this.laneFlash = new Array(LANES).fill(0);
     this.texCache = new Map();
+    this.selectedLane = null;
+    this.streakSpeed = 1;
 
     const renderer = (this.renderer = new THREE.WebGLRenderer({ antialias: true }));
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -58,6 +103,7 @@ export class Stage {
     this.camera = new THREE.PerspectiveCamera(55, 1, 0.1, 300);
     this._buildBackground();
     this._buildRoad();
+    this.setTheme(themeFor(2));
 
     this.raycaster = new THREE.Raycaster();
     this.groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -72,19 +118,9 @@ export class Stage {
   // ---------------------------------------------------------------- building
 
   _buildBackground() {
-    this.scene.background = canvasTexture(16, 512, (g, w, h) => {
-      const grad = g.createLinearGradient(0, 0, 0, h);
-      grad.addColorStop(0, '#3b1d8f');
-      grad.addColorStop(0.45, '#8b2fc9');
-      grad.addColorStop(0.8, '#d946ef');
-      grad.addColorStop(1, '#f472b6');
-      g.fillStyle = grad;
-      g.fillRect(0, 0, w, h);
-    });
-
-    // Speed streaks drifting in the sky.
+    // Speed streaks drifting in the sky. (The sky gradient itself comes from the theme.)
     this.streaks = [];
-    const streakMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25, depthWrite: false });
+    const streakMat = (this.streakMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25, depthWrite: false }));
     for (let i = 0; i < 28; i++) {
       const len = 4 + Math.random() * 14;
       const m = new THREE.Mesh(new THREE.PlaneGeometry(len, 0.12 + Math.random() * 0.25), streakMat);
@@ -99,40 +135,28 @@ export class Stage {
   _buildRoad() {
     const s = this.scene;
 
-    // Road surface with lane stripes, fading out into the distance.
-    const roadTex = canvasTexture(LANES * 64, 1024, (g, w, h) => {
-      for (let i = 0; i < LANES; i++) {
-        g.fillStyle = i % 2 ? '#262a3d' : '#1c1f2e';
-        g.fillRect(i * 64, 0, 64, h);
-        g.fillStyle = 'rgba(255,255,255,0.06)';
-        g.fillRect(i * 64, 0, 2, h);
-      }
-      // fade far end to transparent
-      g.globalCompositeOperation = 'destination-in';
-      const grad = g.createLinearGradient(0, 0, 0, h);
-      grad.addColorStop(0, 'rgba(0,0,0,0)');
-      grad.addColorStop(0.18, 'rgba(0,0,0,1)');
-      g.fillStyle = grad;
-      g.fillRect(0, 0, w, h);
-    });
-    const road = new THREE.Mesh(
+    // Road surface with lane stripes, fading out into the distance (texture comes from the theme).
+    const road = (this.road = new THREE.Mesh(
       new THREE.PlaneGeometry(ROAD_W, ROAD_LEN + 6),
-      new THREE.MeshBasicMaterial({ map: roadTex, transparent: true, depthWrite: false }),
-    );
+      new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }),
+    ));
     road.rotation.x = -Math.PI / 2;
     road.position.z = -(ROAD_LEN + 6) / 2 + 6;
+    road.renderOrder = LAYER.road;
     s.add(road);
 
     // Rails
-    const railMat = new THREE.MeshBasicMaterial({ color: 0x8ee3f5, transparent: true, opacity: 0.95 });
-    const glowMat = new THREE.MeshBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.25, depthWrite: false });
+    const railMat = (this.railMat = new THREE.MeshBasicMaterial({ color: 0x8ee3f5, transparent: true, opacity: 0.95 }));
+    const glowMat = (this.glowMat = new THREE.MeshBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.25, depthWrite: false }));
     for (const side of [-1, 1]) {
       const rail = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.12, ROAD_LEN + 6), railMat);
       rail.position.set(side * (ROAD_W / 2 + 0.14), 0.06, road.position.z);
+      rail.renderOrder = LAYER.rails;
       s.add(rail);
       const glow = new THREE.Mesh(new THREE.PlaneGeometry(1.4, ROAD_LEN + 6), glowMat);
       glow.rotation.x = -Math.PI / 2;
       glow.position.set(side * (ROAD_W / 2 + 0.75), 0.01, road.position.z);
+      glow.renderOrder = LAYER.rails;
       s.add(glow);
     }
 
@@ -155,15 +179,16 @@ export class Stage {
       );
       m.rotation.x = -Math.PI / 2;
       m.position.set(laneX(i), 0.02, -9 + 0.6);
+      m.renderOrder = LAYER.beams;
       s.add(m);
       this.beams.push(m);
     }
 
     // Hit line + target rings + hit pads.
-    const line = new THREE.Mesh(
+    const line = (this.hitLine = new THREE.Mesh(
       new THREE.BoxGeometry(ROAD_W + 1.2, 0.05, 0.14),
       new THREE.MeshBasicMaterial({ color: 0x5eead4 }),
-    );
+    ));
     line.position.set(0, 0.05, 0);
     s.add(line);
 
@@ -183,6 +208,7 @@ export class Stage {
       );
       pad.rotation.x = -Math.PI / 2;
       pad.position.set(laneX(i), 0.03, 0);
+      pad.renderOrder = LAYER.pads;
       s.add(pad);
       this.pads.push(pad);
 
@@ -201,6 +227,47 @@ export class Stage {
 
     this.sparkGeo = new THREE.PlaneGeometry(0.16, 0.16);
     this.ringGeo = new THREE.RingGeometry(0.75, 0.95, 40);
+  }
+
+  // ---------------------------------------------------------------- theme
+
+  /** Recolour the sky, road and rails. `theme` comes from themeFor(). */
+  setTheme(theme) {
+    if (this.theme?.name === theme.name) return;
+    this.theme = theme;
+    const [a, b, c, d] = theme.sky;
+    this.scene.background?.dispose();
+    this.scene.background = canvasTexture(16, 512, (g, w, h) => {
+      const grad = g.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, a);
+      grad.addColorStop(0.45, b);
+      grad.addColorStop(0.8, c);
+      grad.addColorStop(1, d);
+      g.fillStyle = grad;
+      g.fillRect(0, 0, w, h);
+    });
+    this.road.material.map?.dispose();
+    this.road.material.map = canvasTexture(LANES * 64, 1024, (g, w, h) => {
+      for (let i = 0; i < LANES; i++) {
+        g.fillStyle = theme.road[i % 2 ? 1 : 0];
+        g.fillRect(i * 64, 0, 64, h);
+        g.fillStyle = 'rgba(255,255,255,0.06)';
+        g.fillRect(i * 64, 0, 2, h);
+      }
+      // fade far end to transparent
+      g.globalCompositeOperation = 'destination-in';
+      const grad = g.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(0.18, 'rgba(0,0,0,1)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, w, h);
+    });
+    this.road.material.needsUpdate = true;
+    this.railMat.color.set(theme.rail);
+    this.glowMat.color.set(theme.glow);
+    this.hitLine.material.color.set(theme.line);
+    this.streakMat.color.set(theme.streak);
+    this.streakSpeed = STREAK_SPEED[theme.speed] ?? 1;
   }
 
   // ---------------------------------------------------------------- layout
@@ -242,6 +309,12 @@ export class Stage {
 
   setConductorView(on) {
     this.conductorView = on;
+    if (!on) this.selectedLane = null;
+  }
+
+  /** Highlight the lane the Conductor is sending to (null = random lanes). */
+  setSelectedLane(lane) {
+    this.selectedLane = lane;
   }
 
   /** Pixels at the bottom of the screen covered by UI (the road is framed above them). */
@@ -354,6 +427,7 @@ export class Stage {
     if (this.notes.has(note.id)) return;
     const mat = new THREE.MeshBasicMaterial({ map: this._noteTexture(note.word, note.lane, note.correct), transparent: true, depthWrite: false });
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(NOTE_W, NOTE_H), mat);
+    mesh.renderOrder = LAYER.notes;
     mesh.rotation.x = -Math.PI / 2 + 1.15; // stand up toward the camera so words stay readable
     mesh.position.set(laneX(note.lane), NOTE_H * 0.46, -ROAD_LEN);
     mesh.visible = false;
@@ -407,6 +481,7 @@ export class Stage {
         new THREE.MeshBasicMaterial({ color: c, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
       );
       m.position.set(laneX(lane), 0.4, 0);
+      m.renderOrder = LAYER.fx;
       const a = Math.random() * Math.PI * 2;
       const sp = 3 + Math.random() * 5;
       m.userData = { vx: Math.cos(a) * sp * 0.6, vy: 3 + Math.random() * 5, vz: Math.sin(a) * sp * 0.4, life: 0.6 };
@@ -419,6 +494,7 @@ export class Stage {
     );
     ring.rotation.x = -Math.PI / 2;
     ring.position.set(laneX(lane), 0.1, 0);
+    ring.renderOrder = LAYER.fx;
     ring.userData.life = 0.4;
     this.scene.add(ring);
     this.rings.push(ring);
@@ -449,12 +525,13 @@ export class Stage {
     for (let i = 0; i < LANES; i++) {
       this.laneFlash[i] = Math.max(0, this.laneFlash[i] - dt * 3.5);
       this.beams[i].material.opacity = this.laneFlash[i] * 0.6;
-      this.pads[i].material.opacity = 0.18 + this.laneFlash[i] * 0.8;
+      const selected = this.selectedLane === i ? 0.45 + 0.15 * Math.sin(t / 160) : 0;
+      this.pads[i].material.opacity = Math.min(1, 0.18 + selected + this.laneFlash[i] * 0.8);
     }
 
     for (const s of this.streaks) {
-      s.position.x -= s.userData.speed * dt;
-      s.position.y -= s.userData.speed * dt * 0.18;
+      s.position.x -= s.userData.speed * this.streakSpeed * dt;
+      s.position.y -= s.userData.speed * this.streakSpeed * dt * 0.18;
       if (s.position.x < -90) {
         s.position.x = 90;
         s.position.y = 2 + Math.random() * 40;

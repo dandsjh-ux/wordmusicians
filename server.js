@@ -9,7 +9,7 @@ import {
 } from './shared/categories.js';
 import {
   LANES, MAX_PLAYERS, COUNT_IN_BEATS, SPEEDS, POINTS, comboBonus, IDLE_AUTOSEND_BEATS,
-  sanitizeSettings, maxDistractorsFor,
+  MAX_CHORD, MAX_AHEAD_BEATS, sanitizeSettings, maxDistractorsFor,
 } from './shared/rules.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -95,7 +95,7 @@ function roundPublic(r) {
   const rd = r.round;
   const cond = rd.conductorId ? r.players.get(rd.conductorId) : null;
   return {
-    num: rd.num, total: r.settings.rounds, category: rd.category, conductorId: rd.conductorId,
+    num: rd.num, total: r.settings.rounds, category: rd.category, conductorId: rd.conductorId, speed: r.settings.speed,
     conductorName: cond?.name ?? 'Robo-Conductor', bpm: rd.bpm, beatMs: rd.beatMs,
     travelMs: rd.travelMs, startAt: rd.startAt, endAt: rd.endAt, songSeed: rd.songSeed,
     wordsPerRound: r.settings.wordsPerRound, maxDistractors: rd.maxDistractors,
@@ -189,8 +189,9 @@ function startRound(r) {
 }
 
 /**
- * Schedule words onto the highway. All words in one call land on the same beat
- * (a "chord"), so the conductor can send up to 5 at once.
+ * Schedule words onto the highway. Each item is { word, lane }, where a lane of
+ * null (or "random") picks a free lane. All words in one call land on the same
+ * beat; separate calls a moment apart can also share a beat (a "chord").
  * @returns {string|null} an error message, or null on success
  */
 function sendWords(r, items) {
@@ -199,14 +200,15 @@ function sendWords(r, items) {
   const W = r.settings.wordsPerRound;
   if (rd.sent >= W) return 'No words left to send this round!';
 
-  const lanes = new Set();
+  const fixed = new Set();
   const notes = [];
-  for (const it of items.slice(0, LANES)) {
-    const lane = Number(it.lane);
-    if (!Number.isInteger(lane) || lane < 0 || lane >= LANES || lanes.has(lane)) continue;
+  for (const it of items.slice(0, MAX_CHORD)) {
+    const random = it.lane === null || it.lane === undefined || it.lane === 'random';
+    const lane = random ? null : Number(it.lane);
+    if (!random && (!Number.isInteger(lane) || lane < 0 || lane >= LANES || fixed.has(lane))) continue;
     const entry = rd.palette.find((p) => p.word === it.word);
     if (!entry) continue;
-    lanes.add(lane);
+    if (!random) fixed.add(lane);
     notes.push({ word: entry.word, correct: entry.correct, lane });
   }
   if (!notes.length) return 'Pick a word first.';
@@ -218,14 +220,18 @@ function sendWords(r, items) {
   // House rule: real words must always outnumber trick words.
   const realAfter = rd.sent - rd.sentDistractors + (notes.length - wrongCount);
   if (wrongCount && rd.sentDistractors + wrongCount >= realAfter) {
-    return 'Send more real words than trick words! Add a real word first.';
+    return 'Send more real words than trick words! Send a real word first.';
   }
 
-  // Land on the first free beat that is far enough away for the word to travel the highway.
+  // Land on the first beat that is far enough away for the word to travel the
+  // highway, never earlier than the last word sent, with room in the chosen lanes.
   const t = now();
   const minArrive = Math.max(t + rd.travelMs + 300, rd.startAt + COUNT_IN_BEATS * rd.beatMs);
-  let k = Math.max(Math.ceil((minArrive - rd.startAt) / rd.beatMs), rd.lastBeat + 1);
-  while (notes.some((n) => rd.laneBeats.has(`${k}:${n.lane}`))) k++;
+  const minBeat = Math.ceil((minArrive - rd.startAt) / rd.beatMs);
+  let k = Math.max(minBeat, rd.lastBeat);
+  let lanes;
+  while (!(lanes = assignLanes(rd, k, notes))) k++;
+  if (k > minBeat + MAX_AHEAD_BEATS) return 'Whoa, slow down! Let those words land first.';
   const arriveAt = rd.startAt + k * rd.beatMs;
   if (arriveAt > rd.endAt) return 'Time is up for this round!';
 
@@ -235,14 +241,27 @@ function sendWords(r, items) {
   rd.sent += notes.length;
   rd.sentDistractors += wrongCount;
 
-  const out = notes.map((n) => {
-    const note = { id: ++rd.seq, word: n.word, lane: n.lane, correct: n.correct, arriveAt, results: new Map() };
+  const out = notes.map((n, i) => {
+    const note = { id: ++rd.seq, word: n.word, lane: lanes[i], correct: n.correct, arriveAt, results: new Map() };
     rd.notes.set(note.id, note);
-    rd.laneBeats.add(`${k}:${n.lane}`);
+    rd.laneBeats.add(`${k}:${note.lane}`);
     return publicNote(note);
   });
   io.to(r.id).emit('notes', { notes: out, sent: rd.sent, sentDistractors: rd.sentDistractors });
   return null;
+}
+
+/** Lanes for `notes` on beat `k`, or null if that beat has no room for them. */
+function assignLanes(rd, k, notes) {
+  const used = [...Array(LANES).keys()].filter((l) => rd.laneBeats.has(`${k}:${l}`));
+  if (used.length + notes.length > MAX_CHORD) return null;
+  if (notes.some((n) => n.lane !== null && used.includes(n.lane))) return null;
+  // Random lanes prefer ones that were empty on the previous beat, so words spread out.
+  const taken = new Set([...used, ...notes.map((n) => n.lane)]);
+  const free = randomLanes(LANES).filter((l) => !taken.has(l));
+  free.sort((a, b) => rd.laneBeats.has(`${k - 1}:${a}`) - rd.laneBeats.has(`${k - 1}:${b}`));
+  const lanes = notes.map((n) => (n.lane !== null ? n.lane : free.shift()));
+  return lanes.includes(undefined) ? null : lanes;
 }
 
 const publicNote = (n) => ({ id: n.id, word: n.word, lane: n.lane, correct: n.correct, arriveAt: n.arriveAt });
@@ -265,7 +284,7 @@ function autoSend(r, { allowTricks }) {
   let tricksLeft = rd.maxDistractors - rd.sentDistractors;
   let real = rd.sent - rd.sentDistractors;
   let tricks = rd.sentDistractors;
-  const items = randomLanes(count).map((lane) => {
+  const items = Array.from({ length: count }, () => {
     const useTrick = allowTricks && wrong.length && tricksLeft > 0 && tricks + 1 < real && Math.random() < trickChance;
     if (useTrick) {
       tricksLeft--;
@@ -273,7 +292,7 @@ function autoSend(r, { allowTricks }) {
     } else {
       real++;
     }
-    return { lane, word: pick(useTrick ? wrong : correct).word };
+    return { lane: null, word: pick(useTrick ? wrong : correct).word };
   });
   sendWords(r, items);
 }

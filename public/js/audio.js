@@ -1,6 +1,7 @@
 // Procedural MIDI soundtrack + sound cues.
 //
-// Each round gets a song generated from a seed. The song is pure MIDI data
+// Each round gets a song generated from a seed, in a style that matches the
+// round's speed (see STYLES). The song is pure MIDI data
 // (note numbers, velocities, durations in 16th-note steps) produced by
 // `stepEvents()`. The same data is either played live through a small Web
 // Audio synth or written out as a Standard MIDI File by `buildMidiFile()`.
@@ -17,36 +18,150 @@ export function mulberry32(a) {
   };
 }
 
-const CHORDS = { I: [0, 4, 7], ii: [2, 5, 9], iii: [4, 7, 11], IV: [5, 9, 12], V: [7, 11, 14], vi: [9, 12, 16] };
-const PROGRESSIONS = [
-  ['I', 'V', 'vi', 'IV'],
-  ['vi', 'IV', 'I', 'V'],
-  ['I', 'vi', 'IV', 'V'],
-  ['I', 'IV', 'vi', 'V'],
-  ['vi', 'V', 'IV', 'V'],
-  ['I', 'iii', 'IV', 'V'],
-];
+const CHORDS = {
+  I: [0, 4, 7], ii: [2, 5, 9], iii: [4, 7, 11], IV: [5, 9, 12], V: [7, 11, 14], vi: [9, 12, 16],
+  Imaj7: [0, 4, 7, 11], ii7: [2, 5, 9, 12], iii7: [4, 7, 11, 14], IVmaj7: [5, 9, 12, 16], V7: [7, 11, 14, 17], vi7: [9, 12, 16, 19],
+  Isus: [0, 5, 7], Vsus: [7, 12, 14],
+};
 const ROOTS = [48, 50, 52, 53, 55, 57]; // C3 D3 E3 F3 G3 A3
 const PENTA = [0, 2, 4, 7, 9];
-const KICKS = [[0, 4, 8, 12], [0, 6, 8, 11], [0, 7, 8, 10]];
-const BASSES = [[0, 3, 6, 8, 11, 14], [0, 4, 8, 12], [0, 2, 4, 6, 8, 10, 12, 14], [0, 3, 8, 10, 11]];
 
-export function generateSong(seed) {
+// Song styles by difficulty (index matches SPEEDS in shared/rules.js). Each
+// style lists a few variations of every part, and a round's seed picks one of
+// each, so every speed has its own feel and lots of different songs.
+//
+// Patterns are 16 steps (one bar of 16th notes):
+//   drums: 'X' accent, 'x' normal, 'o' ghost note, '.' rest
+//   bass:  'r' chord root, 'o' root an octave up, 'f' fifth, 't' third, '.' rest
+//          (each bass note rings until the next one, up to a beat)
+export const STYLES = [
+  {
+    name: 'Lo-fi Chill',
+    progressions: [
+      ['Imaj7', 'vi7', 'ii7', 'V7'],
+      ['IVmaj7', 'iii7', 'vi7', 'Imaj7'],
+      ['ii7', 'V7', 'Imaj7', 'vi7'],
+      ['Imaj7', 'IVmaj7', 'iii7', 'vi7'],
+    ],
+    kicks: ['x......x..x.....', 'x.........x.....', 'x......x.x......', 'x..x......x.....'],
+    snares: ['....x.......x...', '....x..o....x...', '....x.......x..o'],
+    hats: ['x.x.x.x.x.x.x.x.', 'x...x...x...x...', 'x.ox..x.x.ox..x.'],
+    ohats: ['................'],
+    basses: ['r......r..f.....', 'r.....o...r.....', 'r...f...r...t...'],
+    arpRates: [2, 4], arpModes: ['up', 'updown', 'pulse'],
+    leadRates: [4, 2], leadDensity: 0.45,
+    swing: [0.18, 0.28], arpWaves: ['triangle', 'sine'], leadWaves: ['triangle', 'sine'],
+  },
+  {
+    name: 'Sunny Pop',
+    progressions: [
+      ['I', 'V', 'vi', 'IV'],
+      ['I', 'IV', 'vi', 'V'],
+      ['IV', 'I', 'V', 'vi'],
+      ['I', 'vi', 'IV', 'V'],
+    ],
+    kicks: ['x...x...x...x...', 'x.....x.x.......', 'x.......x.x.....'],
+    snares: ['....x.......x...', '....x.......x.x.'],
+    hats: ['x.x.x.x.x.x.x.x.', 'x.xxx.x.x.xxx.x.'],
+    ohats: ['................', '..............x.'],
+    basses: ['r.r.r.r.r.r.r.r.', 'r...r...f...r...', 'r..r..r.r..r..o.'],
+    arpRates: [2], arpModes: ['up', 'updown'],
+    leadRates: [2, 4], leadDensity: 0.55,
+    swing: [0, 0.08], arpWaves: ['square', 'triangle'], leadWaves: ['square', 'triangle'],
+  },
+  {
+    name: 'Funky Groove',
+    progressions: [
+      ['vi', 'IV', 'I', 'V'],
+      ['ii7', 'V7', 'iii7', 'vi7'],
+      ['I', 'iii', 'IV', 'V'],
+      ['vi7', 'ii7', 'V7', 'Imaj7'],
+    ],
+    kicks: ['x...x...x...x...', 'x..x..x.x.......', 'x.....x...x..x..', 'x..x....x.x.....'],
+    snares: ['....X.......X...', '....X..o....X.o.', '.o..X..o.o..X...'],
+    hats: ['xxxxxxxxxxxxxxxx', 'x.x.x.x.x.x.x.x.', 'xoxxxoxxxoxxxoxx'],
+    ohats: ['..............x.', '..x...x...x...x.'],
+    basses: ['r..o.r.or..o.ro.', 'r.r...o.r.f...o.', 'r..r..o...r.t.f.'],
+    arpRates: [2, 1], arpModes: ['up', 'updown', 'random'],
+    leadRates: [2], leadDensity: 0.55,
+    swing: [0.05, 0.12], arpWaves: ['square'], leadWaves: ['sawtooth', 'square'],
+  },
+  {
+    name: 'Dance Floor',
+    progressions: [
+      ['vi', 'IV', 'I', 'V'],
+      ['vi', 'V', 'IV', 'V'],
+      ['I', 'V', 'vi', 'IV'],
+      ['ii', 'vi', 'IV', 'Vsus'],
+    ],
+    kicks: ['X...x...X...x...', 'X...x...X...x..x'],
+    snares: ['....x.......x...', '....x.......x.xx', '....x..o....x...'],
+    hats: ['..x...x...x...x.', 'xxxxxxxxxxxxxxxx', 'x.x.x.x.x.x.x.x.'],
+    ohats: ['..x...x...x...x.', '................'],
+    basses: ['..r...r...r...r.', '..o.r.o...o.r.o.', 'r.o.r.o.r.o.r.o.'],
+    arpRates: [1, 2], arpModes: ['up', 'updown', 'pulse', 'random'],
+    leadRates: [2, 1], leadDensity: 0.6,
+    swing: [0], arpWaves: ['square', 'sawtooth'], leadWaves: ['sawtooth', 'square'],
+  },
+  {
+    name: 'Turbo Breakbeat',
+    progressions: [
+      ['vi', 'IV', 'V', 'V'],
+      ['vi', 'V', 'IV', 'iii'],
+      ['I', 'V', 'IV', 'IV'],
+      ['vi', 'ii', 'V', 'Isus'],
+    ],
+    kicks: ['x.........x.....', 'x.x.......x.....', 'x.........xx....', 'x......x..x.....'],
+    snares: ['....X.......X...', '....X..o.o..X...', '....X.......X.oo'],
+    hats: ['xxxxxxxxxxxxxxxx', 'xoxxxoxxxoxxxoxx'],
+    ohats: ['................', '......x.......x.'],
+    basses: ['r.....r.r.......', 'r.......o.....f.', 'r..r....r..r..o.'],
+    arpRates: [1], arpModes: ['up', 'updown', 'random', 'pulse'],
+    leadRates: [1, 2], leadDensity: 0.5,
+    swing: [0], arpWaves: ['square', 'sawtooth'], leadWaves: ['sawtooth', 'square'],
+  },
+];
+
+export function generateSong(seed, speed = 2) {
   const rnd = mulberry32(seed);
   const choose = (arr) => arr[Math.floor(rnd() * arr.length)];
-  const motif = [];
-  for (let i = 0; i < 16; i++) motif.push(rnd() < 0.5 ? Math.floor(rnd() * 8) : null);
+  const style = STYLES[Math.max(0, Math.min(STYLES.length - 1, speed))];
+  const motif = []; // 2 bars of 16ths; the lead plays every `leadRate`-th entry
+  for (let i = 0; i < 32; i++) motif.push(rnd() < style.leadDensity ? Math.floor(rnd() * 8) : null);
   motif[0] = 0;
+  const arpOrder = [...Array(8).keys()].sort(() => rnd() - 0.5);
   return {
     seed,
+    speed,
+    style: style.name,
     root: choose(ROOTS),
-    prog: choose(PROGRESSIONS).map((n) => CHORDS[n]),
-    kick: choose(KICKS),
-    bass: choose(BASSES),
-    arpRate: rnd() < 0.5 ? 2 : 1, // 8ths or 16ths
-    arpUpDown: rnd() < 0.5,
+    prog: choose(style.progressions).map((n) => CHORDS[n]),
+    kick: choose(style.kicks),
+    snare: choose(style.snares),
+    hat: choose(style.hats),
+    ohat: choose(style.ohats),
+    bass: choose(style.basses),
+    arpRate: choose(style.arpRates),
+    arpMode: choose(style.arpModes),
+    arpOrder,
+    leadRate: choose(style.leadRates),
+    swing: choose(style.swing),
+    arpWave: choose(style.arpWaves),
+    leadWave: choose(style.leadWaves),
     motif,
   };
+}
+
+const DRUM_VEL = { X: 1.15, x: 1, o: 0.45 };
+
+function arpNotes(song, chord) {
+  const up = [...chord, ...chord.map((n) => n + 12)];
+  switch (song.arpMode) {
+    case 'updown': return [...up, ...up.slice(1, -1).reverse()];
+    case 'pulse': return [chord[0], up[up.length - 1], chord[1], up[up.length - 1], chord[2], up[up.length - 1]];
+    case 'random': return song.arpOrder.map((i) => up[i % up.length]);
+    default: return up;
+  }
 }
 
 /** All MIDI events that start on global 16th-step `step` (step 0 = count-in bar). */
@@ -65,19 +180,25 @@ export function stepEvents(song, step) {
   const section = b < 4 ? 'intro' : b < 12 ? 'main' : 'break';
   const chord = song.prog[(bar - 1) % 4];
   const root = song.root;
+  const drum = (pattern, inst, note, vel, dur = 1) => {
+    const k = DRUM_VEL[pattern[s]];
+    if (k) ev.push({ inst, note, vel: Math.min(127, Math.round(vel * k * (section === 'intro' ? 0.75 : 1))), dur });
+  };
 
   // Drums
-  if ((section !== 'break' && song.kick.includes(s)) || (section === 'break' && s === 0)) {
-    ev.push({ inst: 'kick', note: 36, vel: 115, dur: 1 });
-  }
-  if (s === 4 || s === 12) ev.push({ inst: 'snare', note: 38, vel: section === 'intro' ? 70 : 100, dur: 1 });
-  if (s % 2 === 0) ev.push({ inst: 'hat', note: 42, vel: s % 4 === 2 ? 85 : 55, dur: 1 });
-  if (section === 'main' && s === 14) ev.push({ inst: 'ohat', note: 46, vel: 70, dur: 2 });
+  if (section !== 'break') drum(song.kick, 'kick', 36, 110);
+  else if (s === 0) ev.push({ inst: 'kick', note: 36, vel: 115, dur: 1 });
+  drum(song.snare, 'snare', 38, 95);
+  drum(song.hat, 'hat', 42, s % 4 === 2 ? 85 : 60);
+  if (section === 'main') drum(song.ohat, 'ohat', 46, 70, 2);
 
-  // Bass
-  if (section !== 'break' && song.bass.includes(s)) {
-    const octave = s === 6 || s === 14 ? 12 : 0;
-    ev.push({ inst: 'bass', note: root - 12 + chord[0] + octave, vel: 105, dur: 2 });
+  // Bass: each note rings until the next one in the pattern (at most a beat).
+  const bc = song.bass[s];
+  if (section !== 'break' && bc !== '.') {
+    const offset = { r: chord[0], o: chord[0] + 12, f: chord[0] + 7, t: chord[1] }[bc] ?? chord[0];
+    let dur = 1;
+    while (dur < 4 && s + dur < 16 && song.bass[s + dur] === '.') dur++;
+    ev.push({ inst: 'bass', note: root - 12 + offset, vel: 105, dur });
   }
 
   // Pad: whole-bar chord
@@ -85,22 +206,24 @@ export function stepEvents(song, step) {
 
   // Arpeggio
   if (section !== 'intro' && s % song.arpRate === 0) {
-    let notes = [...chord, ...chord.map((n) => n + 12)];
-    if (song.arpUpDown) notes = [...notes, ...notes.slice(1, -1).reverse()];
+    const notes = arpNotes(song, chord);
     const idx = (s / song.arpRate) % notes.length;
     ev.push({ inst: 'arp', note: root + 24 + notes[idx], vel: 70, dur: 1 });
   }
 
-  // Lead melody in the second half of the main section (2-bar motif of 8th notes).
-  if (b >= 8 && b < 12 && s % 2 === 0) {
-    const deg = song.motif[((b - 8) % 2) * 8 + s / 2];
+  // Lead melody in the second half of the main section (2-bar motif).
+  if (b >= 8 && b < 12 && s % song.leadRate === 0) {
+    const deg = song.motif[((b - 8) % 2) * 16 + s];
     if (deg !== null) {
       const note = root + 24 + PENTA[deg % 5] + 12 * Math.floor(deg / 5);
-      ev.push({ inst: 'lead', note, vel: 90, dur: 2 });
+      ev.push({ inst: 'lead', note, vel: 90, dur: song.leadRate });
     }
   }
   return ev;
 }
+
+/** Swing: off-beat 16ths are pushed late by this fraction of a step. */
+export const swingOffset = (song, step) => (step % 2 ? song.swing ?? 0 : 0);
 
 // ------------------------------------------------------------------ MIDI file
 
@@ -157,7 +280,7 @@ export function buildMidiFile(song, bpm, bars = 33) {
     for (const e of stepEvents(song, step)) {
       const ch = GM[e.inst][0];
       const evs = tracks.get(ch);
-      const on = step * STEP;
+      const on = step * STEP + Math.round(swingOffset(song, step) * STEP);
       const off = on + Math.max(1, e.dur * STEP - 10);
       evs.push({ tick: on, order: 2, bytes: [0x90 | ch, e.note, e.vel] });
       evs.push({ tick: off, order: 1, bytes: [0x80 | ch, e.note, 0] });
@@ -249,11 +372,11 @@ export class AudioEngine {
 
   // ---- sequencer
 
-  startSong({ seed, bpm, startAt }, serverNow) {
+  startSong({ seed, bpm, startAt, speed }, serverNow) {
     this.unlock();
     this.stopSong(0);
     if (!this.ctx) return;
-    this.song = generateSong(seed);
+    this.song = generateSong(seed, speed);
     this.bpm = bpm;
     this.stepMs = 60000 / bpm / 4;
     this.startAt = startAt;
@@ -293,7 +416,7 @@ export class AudioEngine {
     for (;;) {
       const stepT = this.startAt + this.nextStep * this.stepMs;
       if (stepT > nowS + 150) break;
-      const when = this._toCtx(stepT);
+      const when = this._toCtx(stepT + swingOffset(this.song, this.nextStep) * this.stepMs);
       if (when >= this.ctx.currentTime - 0.03) {
         for (const e of stepEvents(this.song, this.nextStep)) this._play(e, Math.max(when, this.ctx.currentTime), this.musicBus);
       }
@@ -387,12 +510,14 @@ export class AudioEngine {
         }
         break;
       case 'arp': {
-        const { g } = this._osc('square', mtof(e.note), t, 0.12, out, 0.12 * v, { filter: 2600 });
+        const wave = this.song?.arpWave ?? 'square';
+        const { g } = this._osc(wave, mtof(e.note), t, 0.12, out, (wave === 'sine' || wave === 'triangle' ? 0.17 : 0.12) * v, { filter: 2600 });
         g.connect(this.delaySend);
         break;
       }
       case 'lead': {
-        const { g } = this._osc('sawtooth', mtof(e.note), t, e.dur * stepS * 0.9, out, 0.16 * v, { attack: 0.01, filter: 3200 });
+        const wave = this.song?.leadWave ?? 'sawtooth';
+        const { g } = this._osc(wave, mtof(e.note), t, e.dur * stepS * 0.9, out, (wave === 'sine' || wave === 'triangle' ? 0.22 : 0.16) * v, { attack: 0.01, filter: 3200 });
         g.connect(this.delaySend);
         break;
       }

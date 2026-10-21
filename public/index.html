@@ -44,7 +44,7 @@
           <li>Each round has a <b>category</b>, like <i>Animals</i>.</li>
           <li><b>Word Musicians</b>: words slide down 5 lanes. <b>Tap, click</b> or press <kbd>D</kbd> <kbd>F</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd> when a word that <b>fits</b> reaches the line.</li>
           <li>Let <b>trick words</b> slide past! Hitting one costs points and breaks your combo.</li>
-          <li>The <b>Conductor</b> picks the words live and tries to trip everyone up. They score when players miss or fall for a trick, but they must always send more real words than trick words.</li>
+          <li>The <b>Conductor</b> taps words to send them down the lanes live and tries to trip everyone up. They score when players miss or fall for a trick, but they must always send more real words than trick words.</li>
           <li>The Conductor role passes to the next player each round.</li>
         </ul>
       </details>
@@ -146,16 +146,19 @@
 
     <div id="conductor-panel" class="conductor-panel hidden">
       <div class="cp-head">
-        <span>🎼 <b>You are the Conductor!</b> Pick words, put them in lanes, then send them. Real words must outnumber trick words.</span>
+        <span>🎼 <b>You are the Conductor!</b> Tap a word to send it. Real words must outnumber trick words.</span>
         <span id="cp-budget" class="pill"></span>
       </div>
+      <div id="cp-quota" class="quota"></div>
+      <div class="cp-lanes">
+        <span class="cp-label">Send to</span>
+        <div id="cp-lanes" class="lane-picks"></div>
+      </div>
       <div id="cp-palette" class="chips"></div>
-      <div id="cp-slots" class="slots"></div>
       <div class="cp-actions">
-        <button class="btn small" id="cp-rand-good">🎲 Fits</button>
-        <button class="btn small" id="cp-rand-trick">🎲 Trick</button>
-        <button class="btn small" id="cp-clear">Clear</button>
-        <button class="btn primary" id="cp-send">SEND ▶ <kbd>Space</kbd></button>
+        <span class="cp-tip">Tip: words tapped close together land together as a chord.</span>
+        <button class="btn small" id="cp-rand-good">🎲 Real word <kbd>Space</kbd></button>
+        <button class="btn small" id="cp-rand-trick">🎲 Trick word <kbd>T</kbd></button>
       </div>
     </div>
   </section>

@@ -1,4 +1,4 @@
-import { Stage, LANE_COLORS } from './stage.js';
+import { Stage, LANE_COLORS, THEMES, themeFor } from './stage.js';
 import { AudioEngine, downloadMidi, generateSong } from './audio.js';
 import {
   CATEGORIES, MAX_CUSTOM_CATEGORIES, MAX_CUSTOM_WORDS, MIN_CUSTOM_WORDS,
@@ -79,6 +79,7 @@ function show(id) {
   if (attract) {
     stage.setConductorView(false);
     stage.setTravel(3400);
+    attractThemeAt = 0; // show a fresh colour theme straight away
   }
   document.body.classList.toggle('conducting', state.inGame && state.role === 'conductor');
 }
@@ -308,8 +309,9 @@ $('#btn-host-go').onclick = () => {
 };
 
 $('#btn-midi').onclick = () => {
-  const speed = SPEEDS[+$('#set-speed').value];
-  downloadMidi(generateSong(Math.floor(Math.random() * 1e9)), speed.bpm, `word-musicians-${speed.label.toLowerCase()}.mid`);
+  const idx = +$('#set-speed').value;
+  const speed = SPEEDS[idx];
+  downloadMidi(generateSong(Math.floor(Math.random() * 1e9), idx), speed.bpm, `word-musicians-${speed.label.toLowerCase()}.mid`);
 };
 
 // ================================================================ room
@@ -399,6 +401,10 @@ socket.on('roundStart', (rd) => {
   show('game');
   stage.clearNotes();
   stage.setTravel(rd.travelMs);
+  const theme = themeFor(rd.speed, rd.songSeed);
+  stage.setTheme(theme);
+  document.documentElement.style.setProperty('--accent', theme.rail);
+  document.body.style.background = theme.sky[0];
   stage.setConductorView(state.role === 'conductor');
   $('#conductor-panel').classList.toggle('hidden', state.role !== 'conductor');
   syncInset();
@@ -410,7 +416,7 @@ socket.on('roundStart', (rd) => {
   const big = $('#big-category');
   big.innerHTML = '';
   big.append(
-    el('small', { className: 'txt', textContent: `Round ${rd.num} of ${rd.total}` }),
+    el('small', { className: 'txt', textContent: `Round ${rd.num} of ${rd.total} · ${theme.name}` }),
     el('span', { textContent: `${rd.category.emoji} ` }),
     el('span', { className: 'txt', textContent: rd.category.name.toUpperCase() }),
   );
@@ -420,7 +426,7 @@ socket.on('roundStart', (rd) => {
   if (state.role === 'conductor') resetConductor();
   renderScoreboard();
   updateHud();
-  audio.startSong({ seed: rd.songSeed, bpm: rd.bpm, startAt: rd.startAt }, serverNow);
+  audio.startSong({ seed: rd.songSeed, bpm: rd.bpm, startAt: rd.startAt, speed: rd.speed }, serverNow);
 });
 
 function updateRoleBanner() {
@@ -521,7 +527,9 @@ $('#btn-final-room').onclick = () => {
 // Keep the 3D road framed above the conductor panel.
 const panel = $('#conductor-panel');
 function syncInset() {
-  stage.setBottomInset(state.inGame && !panel.classList.contains('hidden') ? panel.offsetHeight : 0);
+  const h = state.inGame && !panel.classList.contains('hidden') ? panel.offsetHeight : 0;
+  stage.setBottomInset(h);
+  document.documentElement.style.setProperty('--panel-h', `${h}px`);
 }
 new ResizeObserver(syncInset).observe(panel);
 window.addEventListener('resize', syncInset);
@@ -615,7 +623,7 @@ function pressLane(lane) {
   if (attract) return;
   stage.pressLane(lane);
   if (state.role === 'conductor') {
-    selectSlot(lane);
+    selectLane(cp.lane === lane ? null : lane);
     return;
   }
   if (state.role !== 'player' || !state.round) return;
@@ -672,15 +680,19 @@ stage.onFrame = (t) => {
   } else {
     for (const n of stage.allPending()) if (t - n.arriveAt > JUDGE.good) stage.resolve(n.id, { hit: false });
   }
-  if (state.role === 'conductor') {
-    $('#cp-send').classList.toggle('cooling', t < cp.cooldownUntil);
-  }
 };
 
 // Home-screen eye candy: words fly down and get "played" automatically.
 let attractNext = 0;
 let attractId = -1;
+let attractThemeAt = 0;
+let attractTheme = 0;
+const ALL_THEMES = THEMES.flatMap((set, speed) => set.map((_, i) => themeFor(speed, i)));
 function attractFrame(t) {
+  if (t > attractThemeAt) {
+    attractThemeAt = t + 9000;
+    stage.setTheme(ALL_THEMES[attractTheme++ % ALL_THEMES.length]);
+  }
   if (t > attractNext) {
     attractNext = t + 430 + Math.random() * 500;
     const cat = CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)];
@@ -712,11 +724,14 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (state.role === 'conductor') {
-    if (e.key === ' ' || e.key === 'Enter') {
+    const k = e.key.toLowerCase();
+    if (k === ' ') {
       e.preventDefault();
-      conductorSend();
-    } else if (e.key === 'Backspace') {
-      clearSlots();
+      randomSend(true);
+    } else if (k === 't') {
+      randomSend(false);
+    } else if (k === 'r' || k === '0') {
+      selectLane(null);
     }
   }
 });
@@ -753,15 +768,18 @@ $('#vol-sfx').oninput = (e) => audio.setSfxVolume(+e.target.value);
 
 // ================================================================ conductor
 
-const cp = { slots: new Array(LANES).fill(null), active: 0, palette: [], cooldownUntil: 0 };
+// Tap-to-send: every tap on a word sends it straight down the highway, to the
+// chosen lane or a random one. No staging, no SEND button.
+const TAP_GAP_MS = 120; // ignore accidental double-taps
+const cp = { lane: null, palette: [], lastTap: 0, chips: new Map() };
 
 function resetConductor() {
-  cp.slots.fill(null);
-  cp.active = 0;
+  cp.lane = null;
   cp.palette = [];
-  cp.cooldownUntil = 0;
+  cp.lastTap = 0;
+  stage.setSelectedLane(null);
+  renderLanePicker();
   renderPalette();
-  renderSlots();
   renderBudget();
 }
 
@@ -770,117 +788,127 @@ socket.on('palette', (palette) => {
   renderPalette();
 });
 
-/** How many more trick words may be staged right now. */
+/** Trick words that may be sent right now (per-round limit, and real words must outnumber tricks). */
 function tricksLeft() {
   const rd = state.round;
   if (!rd) return 0;
-  const stagedTricks = cp.slots.filter((w) => w && !isCorrect(w)).length;
-  const stagedReal = cp.slots.filter((w) => w && isCorrect(w)).length;
-  const tricks = rd.sentDistractors + stagedTricks;
-  const real = rd.sent - rd.sentDistractors + stagedReal;
-  // Limit per round, and real words must always outnumber trick words.
-  return Math.min(rd.maxDistractors - tricks, real - tricks - 1);
-}
-const isCorrect = (word) => cp.palette.find((p) => p.word === word)?.correct;
-
-function renderPalette() {
-  const wrap = $('#cp-palette');
-  const noTricks = tricksLeft() <= 0;
-  wrap.replaceChildren(...cp.palette.map((p) => {
-    const b = el('button', { className: `chip ${p.correct ? 'good' : 'bad'}`, textContent: p.word });
-    b.disabled = !p.correct && noTricks;
-    if (b.disabled) b.title = 'Real words must outnumber trick words';
-    b.onclick = () => placeWord(p.word);
-    b.ondblclick = () => conductorSend();
-    return b;
-  }));
+  const tricks = rd.sentDistractors;
+  const real = rd.sent - tricks;
+  return Math.max(0, Math.min(rd.maxDistractors - tricks, real - tricks - 1));
 }
 
-function renderSlots() {
-  $('#cp-slots').replaceChildren(...cp.slots.map((w, i) => {
+function renderLanePicker() {
+  const opts = [null, ...Array.from({ length: LANES }, (_, i) => i)];
+  $('#cp-lanes').replaceChildren(...opts.map((lane) => {
     const b = el('button', {
-      className: `slot${w ? ' filled' : ''}${w && !isCorrect(w) ? ' trick' : ''}${cp.active === i ? ' active' : ''}`,
-      style: `--lane:${LANE_COLORS[i]}`,
-    }, el('small', { textContent: `${i + 1} · ${LANE_KEYS[i]}` }), w || '—');
-    b.onclick = () => {
-      if (cp.active === i && cp.slots[i]) cp.slots[i] = null;
-      cp.active = i;
-      renderSlots();
-      renderPalette();
-    };
+      className: `lane-pick${cp.lane === lane ? ' active' : ''}${lane === null ? ' random' : ''}`,
+      style: lane === null ? '' : `--lane:${LANE_COLORS[lane]}`,
+      title: lane === null ? 'Each word goes to a random lane (R)' : `Send to lane ${lane + 1} (${LANE_KEYS[lane]})`,
+    }, lane === null ? '🎲 Random' : el('span', { textContent: `${lane + 1}` }), lane === null ? '' : el('small', { textContent: LANE_KEYS[lane] }));
+    b.onclick = () => selectLane(lane);
     return b;
   }));
+}
+
+function selectLane(lane) {
+  cp.lane = lane;
+  stage.setSelectedLane(lane);
+  audio.cue('click');
+  renderLanePicker();
+}
+
+// Chips are built once per palette and then only updated, so a re-render can never swallow a tap.
+function renderPalette() {
+  cp.chips.clear();
+  $('#cp-palette').replaceChildren(...cp.palette.map((p) => {
+    const b = el('button', { className: `chip ${p.correct ? 'good' : 'bad'}`, textContent: p.word });
+    b.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); // send on touch-down: snappier than waiting for click
+      sendWord(p.word, b);
+    });
+    b.addEventListener('click', (e) => e.detail === 0 && sendWord(p.word, b)); // keyboard activation
+    cp.chips.set(p.word, { b, correct: p.correct });
+    return b;
+  }));
+  refreshPalette();
+}
+
+function refreshPalette() {
+  const rd = state.round;
+  const noTricks = tricksLeft() <= 0;
+  const noWords = !rd || rd.sent >= rd.wordsPerRound;
+  for (const { b, correct } of cp.chips.values()) {
+    const locked = noWords || (!correct && noTricks);
+    b.classList.toggle('locked', locked);
+    b.setAttribute('aria-disabled', locked);
+    b.title = noWords ? 'No words left this round' : locked ? 'Send more real words first' : 'Tap to send';
+  }
 }
 
 function renderBudget() {
   const rd = state.round;
   if (!rd) return;
   const real = rd.sent - rd.sentDistractors;
-  $('#cp-budget').textContent = `Words ${rd.sent}/${rd.wordsPerRound} · Real ${real} · Tricks ${rd.sentDistractors}/${rd.maxDistractors}`;
+  const tricks = rd.sentDistractors;
+  $('#cp-budget').textContent = `Words ${rd.sent}/${rd.wordsPerRound} · Real ${real} · Tricks ${tricks}/${rd.maxDistractors}`;
   $('#cp-budget').title = 'You must always send more real words than trick words.';
-  renderPalette();
+
+  // Quota: a trick can only go out while real words stay ahead, so show how many more real words unlock one.
+  const q = $('#cp-quota');
+  const need = Math.max(0, tricks + 2 - real);
+  if (rd.sent >= rd.wordsPerRound) {
+    q.textContent = '🎉 All words sent! Watch them land.';
+    q.className = 'quota done';
+  } else if (tricks >= rd.maxDistractors) {
+    q.textContent = rd.maxDistractors ? '🃏 No trick words left. Keep the real words coming!' : '🎵 Real words only this round.';
+    q.className = 'quota';
+  } else if (need > 0) {
+    q.textContent = `🔒 Send ${need} more real word${need > 1 ? 's' : ''} to unlock a trick word`;
+    q.className = 'quota locked';
+  } else {
+    q.textContent = `🃏 Trick word ready! (${tricksLeft()} available)`;
+    q.className = 'quota ready';
+  }
+  refreshPalette();
 }
 
-function placeWord(word) {
-  if (!isCorrect(word) && tricksLeft() <= 0) {
-    const rd = state.round;
-    return toast(rd && rd.sentDistractors >= rd.maxDistractors
+function sendWord(word, chip) {
+  const rd = state.round;
+  if (!rd || state.role !== 'conductor') return;
+  const now = performance.now();
+  if (now - cp.lastTap < TAP_GAP_MS) return;
+  cp.lastTap = now;
+  const correct = cp.chips.get(word)?.correct ?? cp.palette.find((p) => p.word === word)?.correct;
+  if (rd.sent >= rd.wordsPerRound) return toast('No words left to send this round!');
+  if (!correct && tricksLeft() <= 0) {
+    audio.cue('tap');
+    return toast(rd.sentDistractors >= rd.maxDistractors
       ? 'No trick words left this round!'
       : 'Send more real words first: real words must outnumber trick words.');
   }
-  cp.slots[cp.active] = word;
-  audio.cue('click');
-  // advance to the next empty slot
-  for (let k = 1; k <= LANES; k++) {
-    const j = (cp.active + k) % LANES;
-    if (!cp.slots[j]) {
-      cp.active = j;
-      break;
-    }
-  }
-  renderSlots();
-  renderPalette();
-}
-
-function selectSlot(lane) {
-  cp.active = lane;
-  renderSlots();
-}
-
-function clearSlots() {
-  cp.slots.fill(null);
-  cp.active = 0;
-  renderSlots();
-  renderPalette();
-}
-
-function conductorSend() {
-  const rd = state.round;
-  if (!rd || state.role !== 'conductor') return;
-  const items = cp.slots.map((word, lane) => (word ? { word, lane } : null)).filter(Boolean);
-  if (!items.length) return toast('Tap a word to put it in a lane first.');
-  if (serverNow() < cp.cooldownUntil) return;
-  cp.cooldownUntil = serverNow() + rd.beatMs;
-  socket.emit('sendWords', items, (res) => {
+  socket.emit('sendWords', [{ word, lane: cp.lane }], (res) => {
     if (res?.error) {
       toast(res.error);
       return;
     }
     audio.cue('send');
-    clearSlots();
+    if (chip) {
+      chip.classList.remove('sent');
+      void chip.offsetWidth;
+      chip.classList.add('sent');
+    }
   });
 }
 
-function randomPlace(correct) {
+function randomSend(correct) {
   const options = cp.palette.filter((p) => p.correct === correct);
   if (!options.length) return toast(correct ? 'No words available.' : 'No trick words this round.');
-  placeWord(options[Math.floor(Math.random() * options.length)].word);
+  const p = options[Math.floor(Math.random() * options.length)];
+  sendWord(p.word, cp.chips.get(p.word)?.b);
 }
 
-$('#cp-send').onclick = conductorSend;
-$('#cp-clear').onclick = clearSlots;
-$('#cp-rand-good').onclick = () => randomPlace(true);
-$('#cp-rand-trick').onclick = () => randomPlace(false);
+$('#cp-rand-good').onclick = () => randomSend(true);
+$('#cp-rand-trick').onclick = () => randomSend(false);
 
 // Make sure word textures use the game font once it has loaded.
 document.fonts?.ready.then(() => stage.texCache.clear());

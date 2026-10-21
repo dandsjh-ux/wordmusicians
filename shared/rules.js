@@ -32,6 +32,12 @@ export const comboBonus = (combo) => Math.min(combo, 40) * 5;
 // auto-plays a (correct) word for them, which only helps the players.
 export const IDLE_AUTOSEND_BEATS = 6;
 
+// Tap-to-send: each tap sends one word straight away. Taps close together land
+// on the same beat as a chord of up to MAX_CHORD words, and the Conductor can't
+// get more than MAX_AHEAD_BEATS ahead of the earliest beat a word could land on.
+export const MAX_CHORD = 3;
+export const MAX_AHEAD_BEATS = 6;
+
 export const SETTING_LIMITS = {
   speed: [0, SPEEDS.length - 1, 2],
   roundSeconds: [30, 180, 60],
